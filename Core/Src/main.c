@@ -58,7 +58,7 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 /* Variable to hold the state of the button transitions*/
 volatile ButtonState_t state =BUTTON_IDLE;
-volatile uint8_t expected_state;
+volatile uint8_t expected_state = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
