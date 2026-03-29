@@ -19,6 +19,43 @@ LED → PA5 (Output)\
 Timer → TIM2 (\~20 ms debounce)\
 MCU → STM32F446RE
 
+## System Evolution
+
+This project evolved through multiple iterations to improve system reliability,
+control flow, and architectural clarity.
+
+
+### Version 1 — Basic State Machine (ISR-Driven)
+
+- Implemented a simple state machine:
+  - BUTTON_IDLE
+  - BUTTON_PRESSED
+- Debounce handled using timer interrupt
+- State transitions and actions handled inside ISR
+
+#### Limitations
+
+- Logic tightly coupled inside interrupts
+- Hard to scale for complex behaviors
+- Difficult to debug and extend
+- Violates best practice: heavy ISR processing
+
+
+### Version 2 — Refactored State Machine (Main-Driven)
+
+- Retained state machine concept but improved structure
+- Moved decision-making and actions to main loop
+- ISR used only for:
+  - Event detection (EXTI)
+  - Signal validation (Timer)
+
+#### Improvements
+
+- Clean separation of concerns
+- Improved system predictability
+- Easier debugging and maintenance
+- Scalable for advanced features
+
 
 ## Key Features
 Interrupt-driven button handling (EXTI)\
