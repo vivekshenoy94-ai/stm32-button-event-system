@@ -34,15 +34,23 @@ typedef enum{
 	BUTTON_PRESSED
 } ButtonState_t;
 
+/* Defines different Button Events */
+typedef enum{
+	EVENT_NONE,
+	EVENT_SHORT_PRESS,
+	EVENT_LONG_PRESS
+} ButtonEvent_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define INPUT_GROUP GPIOC
+#define INPUT_GROUP   GPIOC
 #define BUTTON_SWITCH GPIO_PIN_13
 
-#define OUTPUT_GROUP GPIOA
-#define LED GPIO_PIN_5
+#define OUTPUT_GROUP  GPIOA
+#define LED           GPIO_PIN_5
+#define BUTTON_ACTIVE GPIO_PIN_RESET
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -57,8 +65,13 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 /* Variable to hold the state of the button transitions*/
-volatile ButtonState_t state =BUTTON_IDLE;
-volatile uint8_t expected_state = 0;
+volatile ButtonState_t button_state =BUTTON_IDLE;
+/* Variable to hold the Press event of Button*/
+volatile ButtonEvent_t button_event =EVENT_NONE;
+/* Variable to hold the start time when the button is first pressed*/
+uint32_t press_start_time=0;
+/* Variable to hold the overall duration of the button press*/
+uint32_t press_duration=0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,7 +80,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void APP_LEDOutput();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -83,15 +96,37 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	if(GPIO_Pin == BUTTON_SWITCH)
 	{
-		/*Trigger the timer only if the state is idle*/
-		if(state == BUTTON_IDLE)
+		if(HAL_GPIO_ReadPin(INPUT_GROUP,BUTTON_SWITCH)==BUTTON_ACTIVE)
 		{
-			expected_state = HAL_GPIO_ReadPin(INPUT_GROUP,BUTTON_SWITCH);
-			/*Clear the timer*/
-			__HAL_TIM_SET_COUNTER(&htim2,0);
-			/*Start timer*/
-			HAL_TIM_Base_Start_IT(&htim2);
-			state = BUTTON_DEBOUNCING;
+			/*Trigger the timer only if the state is idle*/
+			if(button_state == BUTTON_IDLE)
+			{
+
+				/*Clear the timer*/
+				__HAL_TIM_SET_COUNTER(&htim2,0);
+				/*Start timer*/
+				HAL_TIM_Base_Start_IT(&htim2);
+
+				button_state = BUTTON_DEBOUNCING;
+			}
+		}
+		else
+		{
+			if(button_state == BUTTON_PRESSED)
+			{
+				/*Calculate the duration*/
+				press_duration = HAL_GetTick()-press_start_time;
+				/* Button pressed for 2s , then its considered long else short press. */
+				if(press_duration>2000)
+				{
+					button_event = EVENT_LONG_PRESS;
+				}
+				else
+				{
+					button_event = EVENT_SHORT_PRESS;
+				}
+				button_state = BUTTON_IDLE;
+			}
 		}
 
 	}
@@ -104,7 +139,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   *         2. Toggles the LED based on button state
   * @retval void
   */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
 	if(htim->Instance == TIM2)
 	{
 		/*stop timer*/
@@ -112,18 +148,20 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
 		/*If the state is debounce then
 		 *  evaluate the pin to set the Button state accordingly*/
-		if(state == BUTTON_DEBOUNCING)
+		if(button_state == BUTTON_DEBOUNCING)
 		{
 			/* Read the pin to be still pressed after debounce time*/
-			if(HAL_GPIO_ReadPin(INPUT_GROUP,BUTTON_SWITCH) == expected_state)
+			if(HAL_GPIO_ReadPin(INPUT_GROUP,BUTTON_SWITCH) == BUTTON_ACTIVE)
 			{
 
-				state = BUTTON_PRESSED;
+				button_state = BUTTON_PRESSED;
+				/*Capture the button press time*/
+				press_start_time = HAL_GetTick();
 			}
 			else
 			{
 				/*Ignore the event since it was not valid*/
-				state = BUTTON_IDLE;
+				button_state = BUTTON_IDLE;
 			}
 
 		}
@@ -133,17 +171,37 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
 
 /**
-  * @brief  Toggles the LED based on the Button State
+  * @brief  Toggles/Blink the LED based on the Button State
+  *         SHORT PRESS : Toggle Once 
+  *         LONG PRESS : Keep the LED in BLINK state
   * @retval void
   */
-void APP_LEDToggle()
+static void APP_LEDOutput()
 {
-	/*Toggle the LED if the press on the button is detected*/
-	if(state == BUTTON_PRESSED)
+
+	static uint32_t last_toggle=0;
+
+	/*Toggle the LED if the press on the button is short*/
+	if(button_event == EVENT_SHORT_PRESS)
 	{
 		HAL_GPIO_TogglePin(OUTPUT_GROUP,LED);
-		state = BUTTON_IDLE;
+		button_event = EVENT_NONE;
 	}
+	/*Blink the LED if the press on the button is long*/
+	else if(button_event == EVENT_LONG_PRESS)
+	{
+		/*Blink => Toggle with delay(500ms) */
+		if(HAL_GetTick()-last_toggle > 500)
+		{
+			HAL_GPIO_TogglePin(OUTPUT_GROUP,LED);
+			last_toggle = HAL_GetTick();
+		}
+	}
+	else
+	{
+
+	}
+
 }
 
 /* USER CODE END 0 */
@@ -187,9 +245,9 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
+	APP_LEDOutput();
     /* USER CODE END WHILE */
-	APP_LEDToggle();
+
     /* USER CODE BEGIN 3 */
 
   }
@@ -344,7 +402,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : PC13 */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
