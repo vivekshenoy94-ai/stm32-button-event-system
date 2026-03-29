@@ -1,4 +1,4 @@
-# STM32 Button Event System (Debounce + Short/Long Press)
+# STM32 Button Event System (Debounce + Multi-Press Handling)
 
 ------------------------------------------------------------------------
 
@@ -61,7 +61,7 @@ control flow, and architectural clarity.
 - Easier debugging and maintenance
 - Scalable for advanced features
 
-### Version 3 — Event-Driven Architecture with Short & Long Press Handling (Current)
+### Version 3 — Event-Driven Architecture with Short & Long Press Handling
 
 - Introduced event-based behavior:
   - EVENT_SHORT_PRESS
@@ -88,6 +88,47 @@ control flow, and architectural clarity.
 - Supports advanced features like long press  
 - Non-blocking behavior for continuous actions
 
+
+### Version 4 — Multi-Press Event Handling with Double Click Support (Current)
+
+- Added event-based behavior:
+  - EVENT_DOUBLE_CLICK
+
+- Introduced new FSM states:
+  - BUTTON_WAIT_DOUBLE
+  - BUTTON_SECOND_PRESS
+
+- Implemented *time-window based detection*:
+  - Double click window: 1000 ms
+  - Long press threshold: 2000 ms
+
+- Event evaluation enhanced with *priority handling*:
+  - LONG_CLICK > DOUBLE_CLICK > SHORT_CLICK
+
+#### System Behavior
+
+- Short Click (< 2000 ms):
+  - Triggered only after double-click timeout expires
+  - LED toggles once
+
+- Long Click (> 2000 ms):
+  - Highest priority event
+  - Overrides double click detection
+  - LED enters continuous toggle mode
+
+- Double Click (two presses within 1 second):
+  - Detected only after second release
+  - LED toggles twice
+
+#### Improvements
+
+- Multi-stage event classification  
+- Accurate interaction modeling based on user intent  
+- Proper handling of second press with dedicated state  
+- Eliminates premature double-click detection  
+- Priority-based event resolution  
+- Scalable foundation for multi-click and multi-button systems
+  
 ## Key Features
 - Interrupt-driven button handling (EXTI)
 - Timer-based debounce handling
@@ -96,11 +137,12 @@ control flow, and architectural clarity.
 - Clean separation of ISR and main loop
 - Short press detection  
 - Long press detection (> 2 seconds)  
+- Double click detection (< 1 second window)  
+- Multi-stage FSM handling  
 - Non-blocking LED behavior
 - Deterministic and stable behavior
 
 ## System Architecture
-
 EXTI → Detect edge\
 ↓\
 Timer → Debounce validation\
@@ -121,36 +163,51 @@ Button Press (PC13)\
 
 Button Release\
 → Measure press_duration\
-→ Classify:\
-     < 2000 ms → SHORT PRESS\
-     > 2000 ms → LONG PRESS\
-→ Generate event
+→ If > 2000 ms → LONG PRESS\
+→ Else → Enter BUTTON_WAIT_DOUBLE\
+→ Start double-click timeout window
+
+Second Press (within 1 second)\
+→ Transition to BUTTON_SECOND_PRESS\
+→ Capture press2_start_time
+
+Second Release\
+→ Measure press2_duration\
+→ If > 2000 ms → LONG PRESS\
+→ Else → DOUBLE PRESS
+
+Timeout (no second press)\
+→ SHORT PRESS
 
 Main Loop\
 → Execute corresponding action
-
 
 ## Advantages
 - Eliminates button bounce issues  
 - Stable and deterministic response  
 - Accurate press duration measurement  
 - Clean separation of detection, validation, and action  
+- Supports multi-click interactions  
+- Priority-based event resolution  
 - Scalable for advanced input handling
 
 ## Considerations
 - ISR kept minimal\
 - Debounce handled via timer\
 - State machine ensures clean transitions\
-- Main loop must remain non-blocking
+- Main loop must remain non-blocking\
+- External pull-up defines active-low logic
 
 ## Learning Outcomes
 - EXTI interrupt handling\
 - Timer-based debounce\
 - State machine design\
+- Multi-event input handling\
 - ISR design best practices\
 - Debounce using hardware timer\
 - Event-driven embedded system design\
-- Separation of concerns in embedded systems
+- Separation of concerns in embedded systems\
+- Time-window based interaction modeling
 
 
 ## Author
