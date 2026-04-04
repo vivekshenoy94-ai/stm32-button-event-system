@@ -22,10 +22,12 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "button.h"
+#include "event_queue.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+/* Defines IDLE and BLINK States */
 typedef enum{
 	LED_IDLE,
 	LED_BLINK
@@ -87,8 +89,10 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-static void APP_LEDStateEval();
-static void APP_LEDOutput();
+static void app_led_state_eval(void);
+static void app_led_output(void);
+static uint8_t button_collect_events(uint8_t index);
+static void process_appl_events(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -120,57 +124,95 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	}
 }
 
-
 /************************************************************
- * @brief  Sets the LED State based on the  Button State
- *         SINGLE CLICK : LED_TOG_ONCE
- *         DOUBLE CLICK : LED_TOG_TWICE
- *         LONG CLICK : Keep the LED in BLINK state
+ * @brief  Collects and processes the events for LED States
  * @retval void
-  ***********************************************************/
-static void APP_LEDStateEval()
+ ***********************************************************/
+static void app_led_state_eval()
 {
-	ButtonEvent_t Event_t;
 
-	for(int i =0;i<NUM_BUTTON;i++)
+
+	uint8_t index=0;
+
+	while(index<NUM_BUTTON)
 	{
-
-		button_process(&button[i]);
-
-		Event_t =  button_pop_event(&button[i]);
-
-		if(Event_t!=EVENT_NONE)
-		{
-			/*Toggle the LED if its a single click*/
-			if(Event_t== EVENT_LONG_CLICK)
-			{
-				LEDState = LED_BLINK;
-
-			}
-			/*Blink the LED if its a long click*/
-			else if(Event_t == EVENT_SINGLE_CLICK)
-			{
-				toggle_once_flag=1;
-				LEDState = LED_IDLE;
-
-			}
-			/*Toggle the LED twice with delay of 1s if its a double click*/
-			else if(Event_t == EVENT_DOUBLE_CLICK)
-			{
-
-				toggle_twice_flag=1;
-				LEDState = LED_IDLE;
-
-			}
-			else
-			{
-				/*There is no event so do nothing*/
-			}
-		}
+		/*update the events in queue*/
+		index = button_collect_events(index);
+		/*process the queue event to set the LED state*/
+		process_appl_events();
 	}
 }
 
 
+/************************************************************
+ * @brief  Collects the events into the queue for ordered processing
+ * @retval void
+ ***********************************************************/
+static uint8_t button_collect_events(uint8_t index)
+{
+    uint8_t stop_index=NUM_BUTTON;
+	app_event_t app_event;
+	ButtonEvent_t evt;
+	for(int i =index;i<NUM_BUTTON;i++)
+	{
+
+		button_process(&button[i]);
+
+		evt =  button_pop_event(&button[i]);
+        /*Load all the valid event to the queue*/
+		if(evt!=EVENT_NONE)
+		{
+
+			app_event.button_id = i;
+			app_event.event =evt;
+
+			if(!event_queue_push(&app_event))
+			{
+				/*Since processing rest of the button will not yield
+				 * any benefit since the queue is full, hence stop at next index
+				 */
+				stop_index = i+1;
+				break;
+			}
+		}
+	}
+	return stop_index;
+}
+
+/************************************************************
+ * @brief  Sets the LED State based on the  Button Events
+ *         SINGLE CLICK : LED_TOG_ONCE
+ *         DOUBLE CLICK : LED_TOG_TWICE
+ *         LONG CLICK : Keep the LED in BLINK state
+ * @retval void
+ ***********************************************************/
+static void process_appl_events(void)
+{
+	app_event_t app_event;
+	while(event_queue_pop(&app_event))
+	{
+		switch(app_event.event)
+		{
+		/*Toggle the LED if its a single click*/
+		case EVENT_LONG_CLICK:
+			LEDState = LED_BLINK;
+			break;
+			/*Blink the LED if its a long click*/
+		case EVENT_SINGLE_CLICK:
+			toggle_once_flag=1;
+			LEDState = LED_IDLE;
+			break;
+			/*Toggle the LED twice with delay of 1s if its a double click*/
+		case EVENT_DOUBLE_CLICK:
+			toggle_twice_flag=1;
+			LEDState = LED_IDLE;
+			break;
+			/*There is no event so do nothing*/
+		default:
+			break;
+		}
+	}
+}
 /************************************************************
  * @brief  Toggles/Blink the LED based on the Button State
  *         SINGLE CLICK : Toggle Once
@@ -178,7 +220,7 @@ static void APP_LEDStateEval()
  *         LONG CLICK : Keep the LED in BLINK state
  * @retval void
   ***********************************************************/
-static void APP_LEDOutput()
+static void app_led_output()
 {
 	static uint32_t last_toggle=0;
 	static uint8_t toggle_counter =0;
@@ -261,15 +303,15 @@ int main(void)
   /*Initialize the button*/
   button_init(&button[0],GPIOC,GPIO_PIN_13);
   button_init(&button[1],GPIOC,GPIO_PIN_14);
-
+  event_queue_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	APP_LEDStateEval();
-	APP_LEDOutput();
+	app_led_state_eval();
+	app_led_output();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
