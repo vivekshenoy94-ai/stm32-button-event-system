@@ -494,6 +494,122 @@ stateDiagram-v2
 - Establishes foundation for command-driven firmware control
 - Enables scalable UART parser/task integration
 - Aligns UART flow with production-style embedded firmware architecture
+---
+## Software Component Interraction 
+
+```mermaid
+graph TB
+    subgraph App["Application Layer"]
+        AppCode["main.c<br/>button.c<br/>event_queue.c<br/>ISR Callbacks"]
+    end
+    
+    subgraph Middleware["Middleware & Hardware Abstraction"]
+        HAL["HAL<br/>(GPIO, UART, TIM)"]
+        RTOS["RTOS<br/>(FreeRTOS)"]
+    end
+    
+    subgraph CMSIS_Layer["CMSIS Interface"]
+        CMSISInt["stm32f446xx.h<br/>core_cm4.h<br/>Device Headers<br/>NVIC, SysTick APIs"]
+    end
+    
+    subgraph CMSIS_SW["CMSIS Software Layer"]
+        Startup["startup_stm32f446retx.s<br/>system_stm32f4xx.c<br/>Vector Table, Clock Init"]
+    end
+    
+    subgraph Hardware["Hardware (HW)"]
+        MCU["STM32F446RE<br/>Cortex-M4<br/>GPIO, UART, TIM2<br/>NVIC, SysTick"]
+    end
+    
+    %% Bidirectional: App ↔ HAL/RTOS ↔ CMSIS ↔ HW
+    AppCode <-->|HAL Interface| HAL
+    AppCode <-->|RTOS Interface| RTOS
+    HAL <-->|CMSIS Access| CMSISInt
+    RTOS <-->|CMSIS Access| CMSISInt
+    CMSISInt <--> Startup
+    Startup <--> MCU
+    
+    style AppCode fill:#87CEEB
+    style HAL fill:#FFB6C1
+    style RTOS fill:#FFB6C1
+    style CMSISInt fill:#DDA0DD
+    style Startup fill:#F0E68C
+    style MCU fill:#90EE90
+```
+
+## Layered Architecture Explained
+
+### 1. **Application Layer** (Core/)
+   - **Files:** `main.c`, `button.c`, `event_queue.c`
+   - **Responsibility:** Business logic, event handling, LED behavior, UART command processing
+   - **HAL Callback Implementation:** Application provides weak callback implementations that HAL calls from ISR context
+     - `HAL_GPIO_EXTI_Callback()` ← button press/release (you implement this)
+     - `HAL_TIM_PeriodElapsedCallback()` ← timer tick (you implement this)
+     - `HAL_UART_RxCpltCallback()` ← UART character received (you implement this)
+   - **Key:** App does NOT implement ISRs directly; HAL owns the ISR handler and calls your callback from within it
+
+### 2. **Middleware & HAL Layer** (Drivers/ + Middlewares/)
+   - **HAL:** Provides peripheral abstractions (GPIO, UART, TIM)
+   - **RTOS:** Provides task scheduling and synchronization (FreeRTOS)
+   - Both are **sibling layers** that depend on CMSIS, not on each other
+
+### 3. **CMSIS Interface** (Drivers/CMSIS/)
+   - **Files:** Device headers, core headers, interrupt definitions
+   - **Role:** Vendor-neutral abstraction for core CPU, NVIC, SysTick, and device-specific peripherals
+   - **Provides:** Standard interfaces that both HAL and RTOS sit on top of
+
+### 4. **CMSIS Software Layer** (Core/Startup/)
+   - **Files:** `startup_stm32f446retx.s`, `system_stm32f4xx.c`
+   - **Responsibility:** Vector table setup, clock initialization, interrupt routing
+   - **ISR Handlers:** Routes hardware interrupts back to application callbacks
+
+### 5. **Hardware** (STM32F446RE)
+   - **Real hardware:** Cortex-M4 CPU, peripherals (GPIO, UART, TIM), NVIC, SysTick
+
+## Key Control Flows
+
+| Flow | Direction | Example |
+|------|-----------|---------|
+| **Forward (App → HW)** | Application calls HAL/RTOS → CMSIS → HW | `HAL_GPIO_TogglePin()` |
+| **Interrupt (HW → App)** | Hardware signal → CMSIS ISR → Startup handler → App callback | Button press triggers `HAL_GPIO_EXTI_Callback()` |
+| **Scheduling (RTOS)** | App creates tasks → RTOS manages execution → Calls app code back | `xTaskCreate(EventTask, ...)` |
+
+## Concrete Example: Button Press Flow
+
+1. **User presses button** (HW event)
+2. **GPIO interrupt fires** → CMSIS NVIC routes to ISR vector
+3. **HAL ISR handler** (in HAL driver) → processes interrupt, calls `HAL_GPIO_EXTI_Callback()`
+4. **App implements callback** (main.c) → `HAL_GPIO_EXTI_Callback()` body → calls `button_handle_press()`
+5. **Button driver** (button.c) → enqueues event via `button_queue_event_from_isr()`
+6. **Event queue** (event_queue.c) → stores in FIFO
+7. **EventTask (RTOS)** → wakes, processes event from queue
+8. **App logic** → executes based on event type
+9. **LEDTask (RTOS)** → executes LED output in parallel
+10. **App calls HAL** → `HAL_GPIO_TogglePin()` to control LED
+11. **HAL writes register** → GPIO peripheral turns on/off LED
+12. **Hardware outputs** → LED state changes
+
+**Key:** Interrupt path = HW → CMSIS → **HAL ISR handler** → HAL calls your callback → Your app code
+
+## Dependency Rule (Architect's Golden Rule)
+
+```
+✓ Allowed:   App → HAL, App → RTOS, HAL → CMSIS, RTOS → CMSIS
+✗ Forbidden: HAL → RTOS, RTOS → HAL, App → CMSIS directly, App → ISR handlers
+✓ Special:   Callbacks - HAL owns ISR handlers, calls your weak callback implementations
+```
+
+**Callback Pattern Explained:**
+- HAL provides the ISR handler (strong symbol in HAL library)
+- You implement a weak callback in your app (e.g., `HAL_GPIO_EXTI_Callback()`)
+- When interrupt fires: CMSIS/Startup → HAL ISR handler → HAL calls your callback
+- Your callback is HAL's interface to application logic—not a direct CMSIS path
+
+This ensures:
+- **No circular dependencies**
+- **Layers remain replaceable** (swap HAL without touching RTOS)
+- **Clear responsibility boundaries** (HAL owns interrupt infrastructure)
+- **Testability** (Core logic can be unit-tested independently)
+- **Encapsulation** (App never directly implements ISRs or accesses CMSIS ISR layer)
 
 ---
 ## System Architecture
